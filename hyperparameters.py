@@ -68,7 +68,7 @@ def analyze_grains(csv_file_path, threshold=0.72, show_top_rate = 1, visible = "
 
 # 使用示例
 if __name__ == "__main__":
-    csv_file_path = "time_15000.csv"
+    csv_file_path = "data/time_15000.csv"
     threshold_list = [1-i/100 for i in range(0,30,1)]
     len_list = []
     for threshold in threshold_list:

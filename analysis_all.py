@@ -37,7 +37,7 @@ def load_selected_data(data_dir, intervals):
         csv_path = os.path.join(data_dir, csv_file)
 
         try:
-            num_grains, areas, topology = analyze_grains(csv_path, threshold=0.72,
+            num_grains, areas, topology = analyze_grains(csv_path, threshold=0.8,
                                                          print_result=False,
                                                          visible_analyze=False)
 
@@ -61,7 +61,7 @@ def load_selected_data(data_dir, intervals):
 def dynamic_analysis(all_results):
     """根据时间阶段采用不同的分析策略"""
     early_stage = [r for r in all_results if r['time'] <= 100]
-    mid_stage = [r for r in all_results if 100 < r['time'] <= 1000]
+    mid_stage = [r for r in all_results if 100 < r['time'] <= 2000]
     late_stage = [r for r in all_results if r['time'] > 1000]
 
     analysis_results = {}
@@ -100,11 +100,14 @@ def analyze_formation_stage(results):
 
 def analyze_topology_evolution(results):
     """分析拓扑结构演变阶段"""
-    topology_data = {
+    data = {
         'times': [r['time'] for r in results],
         'avg_sides': [],
-        'side_distribution': [],
-        'angle_distribution': []
+        'side_distribution': [], # sides
+        'angle_distribution': [], # angle
+        'growth_rates': [],
+        'size_topology_correlation': [], # area
+        'num_grains': []
     }
 
     for r in results:
@@ -112,32 +115,19 @@ def analyze_topology_evolution(results):
         sides = [v['num_sides'] for v in topology.values()]
         angles = np.concatenate([v['angles'] for v in topology.values()])
 
-        topology_data['avg_sides'].append(np.mean(sides))
-        topology_data['side_distribution'].append(pd.Series(sides).value_counts().sort_index())
-        topology_data['angle_distribution'].append(angles)
+        data['avg_sides'].append(np.mean(sides)) # 平均边数
+        data['side_distribution'].append(pd.Series(sides).value_counts().sort_index()) # 边数分布
+        data['angle_distribution'].append(angles) # 角度分布
+        data['num_grains'].append(r['num_grains']) # 晶粒数量
 
-    return topology_data
+        # 计算平均生长速率
+        for i in range(1, len(results)):
+            delta_t = results[i]['time'] - results[i - 1]['time']
+            delta_area = results[i]['avg_area'] - results[i - 1]['avg_area']
+            data['growth_rates'].append(delta_area / delta_t)
 
-
-def analyze_steady_state(results):
-    """分析稳态生长阶段"""
-    steady_data = {
-        'times': [r['time'] for r in results],
-        'growth_rates': [],
-        'size_topology_correlation': []
-    }
-
-    # 计算平均生长速率
-    for i in range(1, len(results)):
-        delta_t = results[i]['time'] - results[i - 1]['time']
-        delta_area = results[i]['avg_area'] - results[i - 1]['avg_area']
-        steady_data['growth_rates'].append(delta_area / delta_t)
-
-    # 计算尺寸-拓扑相关性(类似Lewis定律)
-    for r in results:
-        topology = r['topology']
+        # area data面积数据
         size_topology = []
-
         for grain_id, props in topology.items():
             # 直接从props中获取面积
             area = props['area']
@@ -146,13 +136,64 @@ def analyze_steady_state(results):
                 'sides': props['num_sides']
             })
 
-        steady_data['size_topology_correlation'].append(size_topology)
+        data['size_topology_correlation'].append(size_topology)
 
-    return steady_data
+    # 计算平均生长速率
+    for i in range(1, len(results)):
+        delta_t = results[i]['time'] - results[i - 1]['time']
+        delta_area = results[i]['avg_area'] - results[i - 1]['avg_area']
+        data['growth_rates'].append(delta_area / delta_t)
+
+    return data
+
+
+def analyze_steady_state(results):
+    """分析稳态生长阶段"""
+    data = {
+        'times': [r['time'] for r in results],
+        'avg_sides': [],
+        'side_distribution': [],  # sides
+        'angle_distribution': [],  # angle
+        'growth_rates': [],
+        'size_topology_correlation': [],
+        'num_grains': []
+    }
+
+    # 计算尺寸-拓扑相关性(类似Lewis定律)
+    for r in results:
+        topology = r['topology']
+        sides = [v['num_sides'] for v in topology.values()]
+        angles = np.concatenate([v['angles'] for v in topology.values()])
+
+        data['avg_sides'].append(np.mean(sides))  # 平均边数
+        data['side_distribution'].append(pd.Series(sides).value_counts().sort_index())  # 边数分布
+        data['angle_distribution'].append(angles)  # 角度分布
+        data['num_grains'].append(r['num_grains'])
+
+        # area data面积数据
+        size_topology = []
+        for grain_id, props in topology.items():
+            # 直接从props中获取面积
+            area = props['area']
+            size_topology.append({
+                'area': area,
+                'sides': props['num_sides']
+            })
+
+        data['size_topology_correlation'].append(size_topology)
+
+    # 计算平均生长速率
+    for i in range(1, len(results)):
+        delta_t = results[i]['time'] - results[i - 1]['time']
+        delta_area = results[i]['avg_area'] - results[i - 1]['avg_area']
+        data['growth_rates'].append(delta_area / delta_t)
+
+    return data
 
 
 def plot_dynamic_results(analysis_results):
     """根据不同阶段的特点进行可视化（独立图表，中文标签）"""
+    image_dir = "images/"
 
     # 1. 晶粒成核速率（初期阶段）
     if 'early' in analysis_results:
@@ -164,6 +205,12 @@ def plot_dynamic_results(analysis_results):
         plt.ylabel('晶粒成核速率')
         plt.title('初期阶段晶粒成核速率变化')
         plt.grid(True)
+
+        # 保存
+        image_path = os.path.join(image_dir, '初期阶段晶粒成核速率变化.svg')
+        plt.savefig(image_path, dpi=300, format='svg')
+
+        # 展示
         plt.show()
 
     # 2. 平均边数随时间变化
@@ -178,7 +225,11 @@ def plot_dynamic_results(analysis_results):
         plt.title('晶粒平均边数随时间变化')
         plt.legend()
         plt.grid(True)
-        plt.savefig('spectral_analysis_results.svg', dpi=300, format='svg')
+
+        # 保存
+        image_path = os.path.join(image_dir, '晶粒平均边数随时间变化(mid).svg')
+        plt.savefig(image_path, dpi=300, format='svg')
+
         plt.show()
 
     # 3. 边数分布（选择代表性时间点）
@@ -195,9 +246,14 @@ def plot_dynamic_results(analysis_results):
 
         plt.xlabel('边数')
         plt.ylabel('出现频率')
-        plt.title('晶粒边数分布（对照论文图3）')
+        plt.title('晶粒边数分布')
         plt.legend(title='时间点')
         plt.grid(True)
+
+        # 保存
+        image_path = os.path.join(image_dir, '晶粒边数分布.svg')
+        plt.savefig(image_path, dpi=300, format='svg')
+
         plt.show()
 
     # 4. 生长速率（稳态阶段）
@@ -210,14 +266,177 @@ def plot_dynamic_results(analysis_results):
         plt.ylabel('平均生长速率（像素/时间步）')
         plt.title('稳态阶段晶粒平均生长速率')
         plt.grid(True)
+
+        # 保存
+        image_path = os.path.join(image_dir, '稳态阶段晶粒平均生长速率.svg')
+        plt.savefig(image_path, dpi=300, format='svg')
+
         plt.show()
 
     # 5. 尺寸-拓扑相关性图（类似Lewis定律）
     if 'late' in analysis_results and len(analysis_results['late']['size_topology_correlation']) > 0:
         plot_lewis_law_relationship(analysis_results['late']['size_topology_correlation'][-1])
 
+    # 6. 平均晶体粒径变化（中期和后期阶段）
+    if 'mid' in analysis_results or 'late' in analysis_results:
+        plt.figure(figsize=(12, 7))
 
-def plot_lewis_law_relationship(size_topology_data):
+        # 收集所有时间点和对应的平均粒径
+        all_times = []
+        all_avg_sizes = []
+
+        if 'mid' in analysis_results:
+            for r in analysis_results['mid']['size_topology_correlation']:
+                areas = [d['area'] for d in r]
+                avg_size = np.mean(np.sqrt(areas))
+                all_avg_sizes.append(avg_size)
+            all_times.extend(analysis_results['mid']['times'])
+
+        if 'late' in analysis_results:
+            for r in analysis_results['late']['size_topology_correlation']:
+                areas = [d['area'] for d in r]
+                avg_size = np.mean(np.sqrt(areas))
+                all_avg_sizes.append(avg_size)
+            all_times.extend(analysis_results['late']['times'])
+
+        # 转换为numpy数组便于计算
+        times_array = np.array(all_times)
+        sizes_array = np.array(all_avg_sizes)
+
+        # 绘制原始数据点
+        plt.plot(times_array, sizes_array, 'mo-', linewidth=2, markersize=8,
+                 label='原始数据', alpha=0.7)
+
+        # 线性拟合（可以选择对中期和后期分别拟合）
+        if len(times_array) > 1:
+            # 整体拟合
+            coeffs = np.polyfit(times_array, sizes_array, 1)
+            poly = np.poly1d(coeffs)
+            fit_line = poly(times_array)
+
+            # 计算R平方值
+            residuals = sizes_array - fit_line
+            ss_res = np.sum(residuals ** 2)
+            ss_tot = np.sum((sizes_array - np.mean(sizes_array)) ** 2)
+            r_squared = 1 - (ss_res / ss_tot)
+
+            # 绘制拟合线
+            plt.plot(times_array, fit_line, 'b--', linewidth=2,
+                     label=f'线性拟合: y = {coeffs[0]:.4f}x + {coeffs[1]:.2f}\nR² = {r_squared:.3f}')
+
+            # 可选：对中期和后期分别拟合
+            if 'mid' in analysis_results and 'late' in analysis_results:
+                mid_end_idx = len(analysis_results['mid']['times'])
+
+                # 中期拟合
+                mid_coeffs = np.polyfit(times_array[:mid_end_idx], sizes_array[:mid_end_idx], 1)
+                mid_poly = np.poly1d(mid_coeffs)
+                plt.plot(times_array[:mid_end_idx], mid_poly(times_array[:mid_end_idx]),
+                         'g:', linewidth=2,
+                         label=f'中期拟合: y = {mid_coeffs[0]:.4f}x + {mid_coeffs[1]:.2f}')
+
+                # 后期拟合
+                late_coeffs = np.polyfit(times_array[mid_end_idx:], sizes_array[mid_end_idx:], 1)
+                late_poly = np.poly1d(late_coeffs)
+                plt.plot(times_array[mid_end_idx:], late_poly(times_array[mid_end_idx:]),
+                         'r:', linewidth=2,
+                         label=f'后期拟合: y = {late_coeffs[0]:.4f}x + {late_coeffs[1]:.2f}')
+
+        # 图表装饰
+        plt.xlabel('时间（模拟步数）', fontsize=12)
+        plt.ylabel('平均晶体粒径（像素）', fontsize=12)
+        plt.title('晶体粒径随时间变化及线性拟合分析', fontsize=14, pad=20)
+        plt.grid(True, linestyle='--', alpha=0.6)
+
+        # 添加阶段标记
+        if 'mid' in analysis_results and 'late' in analysis_results:
+            transition_time = analysis_results['mid']['times'][-1]
+            plt.axvline(x=transition_time, color='gray', linestyle='--', alpha=0.5)
+            plt.text(transition_time, np.max(sizes_array) * 0.95,
+                     '中期→后期', ha='center', va='center',
+                     backgroundcolor='white', fontsize=10)
+
+        # 添加拟合方程和统计信息
+        plt.legend(fontsize=10, loc='upper left')
+        plt.tight_layout()
+
+        # 保存
+        image_path = os.path.join(image_dir, '晶体粒径随时间变化.svg')
+        plt.savefig(image_path, dpi=300, format='svg')
+
+        plt.show()
+
+    # 7. 晶粒个数随时间变化（中期和后期阶段）
+    if 'mid' in analysis_results or 'late' in analysis_results:
+        plt.figure(figsize=(12, 7))
+
+        # 准备数据
+        mid_times = analysis_results['mid']['times'] if 'mid' in analysis_results else []
+        mid_counts = analysis_results['mid']['num_grains'] if 'mid' in analysis_results else []
+        late_times = analysis_results['late']['times'] if 'late' in analysis_results else []
+        late_counts = analysis_results['late']['num_grains'] if 'late' in analysis_results else []
+
+        # 合并数据
+        all_times = np.concatenate((mid_times, late_times))
+        all_counts = np.concatenate((mid_counts, late_counts))
+
+        # 绘制曲线
+        plt.plot(all_times, all_counts, 'co-', linewidth=2, markersize=8,
+                 label='晶粒个数', alpha=0.8)
+
+        # 添加趋势线（二次多项式拟合）
+        # if len(all_times) > 2:
+        #     coeffs = np.polyfit(all_times, all_counts, 2)
+        #     poly = np.poly1d(coeffs)
+        #     fit_x = np.linspace(min(all_times), max(all_times), 100)
+        #     fit_y = poly(fit_x)
+        #
+        #     # 计算R平方
+        #     residuals = all_counts - poly(all_times)
+        #     ss_res = np.sum(residuals ** 2)
+        #     ss_tot = np.sum((all_counts - np.mean(all_counts)) ** 2)
+        #     r_squared = 1 - (ss_res / ss_tot)
+        #
+        #     plt.plot(fit_x, fit_y, 'm--', linewidth=2,
+        #              label=f'趋势线 (R²={r_squared:.3f})')
+
+        # 标记阶段分界
+        if 'mid' in analysis_results and 'late' in analysis_results:
+            transition_time = mid_times[-1]
+            plt.axvline(x=transition_time, color='gray', linestyle='--', alpha=0.6)
+            plt.text(transition_time, max(all_counts) * 0.9,
+                     '中期→后期', ha='center', va='center',
+                     bbox=dict(facecolor='white', alpha=0.8))
+
+        # 图表装饰
+        plt.xlabel('时间（模拟步数）', fontsize=12)
+        plt.ylabel('晶粒数量', fontsize=12)
+        plt.title('中期和后期晶粒数量随时间变化', fontsize=14, pad=20)
+        plt.grid(True, linestyle='--', alpha=0.6)
+        plt.legend(fontsize=10, loc='upper right')
+
+        # 添加关键点标注
+        if len(all_times) > 0:
+            plt.annotate(f'初始: {all_counts[0]}个',
+                         xy=(all_times[0], all_counts[0]),
+                         xytext=(10, 20), textcoords='offset points',
+                         arrowprops=dict(arrowstyle="->"))
+
+            plt.annotate(f'最终: {all_counts[-1]}个',
+                         xy=(all_times[-1], all_counts[-1]),
+                         xytext=(-50, -30), textcoords='offset points',
+                         arrowprops=dict(arrowstyle="->"))
+
+        plt.tight_layout()
+
+        # 保存
+        image_path = os.path.join(image_dir, '中期和后期晶粒数量随时间变化.svg')
+        plt.savefig(image_path, dpi=300, format='svg')
+
+        plt.show()
+
+
+def plot_lewis_law_relationship(size_topology_data, image_dir='images/'):
     """绘制类似论文图7的Lewis定律关系图（独立图表，中文标签）"""
     areas = [d['area'] for d in size_topology_data]
     sides = [d['sides'] for d in size_topology_data]
@@ -240,9 +459,14 @@ def plot_lewis_law_relationship(size_topology_data):
 
     plt.xlabel('晶粒边数（n）')
     plt.ylabel('平均晶粒面积（像素）')
-    plt.title('晶粒面积与边数关系（对照论文图7）')
+    plt.title('晶粒面积与边数关系')
     plt.legend()
     plt.grid(True)
+
+    # 保存
+    image_path = os.path.join(image_dir, '晶粒面积与边数关系.svg')
+    plt.savefig(image_path, dpi=300, format='svg')
+
     plt.show()
 
 
