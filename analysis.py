@@ -32,37 +32,65 @@ def calculate_angles(polygon):
     return angles
 
 
-def analyze_grain_topology(labeled_array, grain_id):
-    """分析单个晶粒的拓扑结构"""
-    # 提取当前晶粒的掩膜
+def analyze_grain_topology(labeled_array, grain_id, tolerance=2.5):
+    labeled_array = np.pad(labeled_array, pad_width=1, mode='constant', constant_values=0)
     mask = (labeled_array == grain_id)
+    h, w = labeled_array.shape
 
-    # 找到边界
-    boundaries = find_boundaries(mask, mode='outer')
-    coords = np.column_stack(np.where(boundaries))
+    # 1. 检测是否接触图像边界
+    touches_boundary = (
+            np.any(mask[0, :]) or  # 上边界
+            np.any(mask[-1, :]) or  # 下边界
+            np.any(mask[:, 0]) or  # 左边界
+            np.any(mask[:, -1])  # 右边界
+    )
 
-    # 找到轮廓（可能有多条，取最长的）
-    contours = find_contours(mask, 0.5)
+    # 2. 提取轮廓（确保包含边界上的点）
+    contours = find_contours(mask, level=0.5, fully_connected='high')
     if not contours:
         return None
+
     main_contour = max(contours, key=len)
+    polygon = approximate_polygon(main_contour, tolerance=tolerance)
 
-    # 多边形近似（简化顶点）
-    polygon = approximate_polygon(main_contour, tolerance=1.0)
+    # 3. 如果接触边界，添加虚拟边界顶点
+    if touches_boundary:
+        # 找到接触的边界方向
+        boundary_edges = []
+        if np.any(mask[0, :]): boundary_edges.append('top')
+        if np.any(mask[-1, :]): boundary_edges.append('bottom')
+        if np.any(mask[:, 0]): boundary_edges.append('left')
+        if np.any(mask[:, -1]): boundary_edges.append('right')
 
-    # 计算拓扑特征
-    num_sides = len(polygon)
+        # 生成边界顶点（示例：简单连接边界中点）
+        boundary_vertices = []
+        for edge in boundary_edges:
+            if edge == 'top':
+                boundary_vertices.append([0, w // 2])
+            elif edge == 'bottom':
+                boundary_vertices.append([h - 1, w // 2])
+            elif edge == 'left':
+                boundary_vertices.append([h // 2, 0])
+            elif edge == 'right':
+                boundary_vertices.append([h // 2, w - 1])
+
+        # 将边界顶点插入多边形（需根据实际几何调整连接逻辑）
+        polygon = np.vstack([polygon, boundary_vertices])
+
+    # 4.其它拓扑特征
     angles = calculate_angles(polygon)
+    num_sides = len(polygon)
 
     return {
         'num_sides': num_sides,
-        'angles': angles,
+        'touches_boundary': touches_boundary,
+        'boundary_edges': boundary_edges if touches_boundary else None,
         'polygon': polygon,
-        'contour': main_contour
+        'angles': angles
     }
 
 
-def analyze_grains(csv_file_path, threshold=0.72, visible_analyze=False):
+def analyze_grains(csv_file_path, threshold=0.72, print_result=True, visible_analyze=False):
     # 1. 读取CSV文件
     data = pd.read_csv(csv_file_path, header=None).values
 
@@ -89,14 +117,15 @@ def analyze_grains(csv_file_path, threshold=0.72, visible_analyze=False):
             topology_results[grain_id] = result
 
     # 6. 输出结果
-    print("\n晶粒面积排序结果（从大到小）:")
-    for i, idx in enumerate(sorted_indices, 1):
-        grain_id = idx + 1
-        area = grain_areas[idx]
-        topo_info = ""
-        if grain_id in topology_results:
-            topo_info = f", 边数: {topology_results[grain_id]['num_sides']}"
-        print(f"第{i}位: 晶粒{grain_id}, 面积: {area} 像素{topo_info}")
+    if print_result:
+        print("\n晶粒面积排序结果（从大到小）:")
+        for i, idx in enumerate(sorted_indices, 1):
+            grain_id = idx + 1
+            area = grain_areas[idx]
+            topo_info = ""
+            if grain_id in topology_results:
+                topo_info = f", 边数: {topology_results[grain_id]['num_sides']}"
+            print(f"第{i}位: 晶粒{grain_id}, 面积: {area} 像素{topo_info}")
 
     # 7. 可视化
     if visible_analyze:
@@ -109,19 +138,11 @@ def analyze_grains(csv_file_path, threshold=0.72, visible_analyze=False):
         plt.show()
 
         # 7.2 标记的晶粒
-        # plt.figure(figsize=(6, 6))
-        # colors = plt.cm.get_cmap('tab20', num_features + 1)(np.arange(num_features + 1))
-        # colors[0] = [0, 0, 0, 1]  # 背景
-        # cmap = mcolors.ListedColormap(colors)
-        # norm = mcolors.BoundaryNorm(np.arange(num_features + 2) - 0.5, cmap.N)
-        # img = plt.imshow(labeled_array, cmap=cmap, norm=norm)
-        # plt.title('标记的晶粒')
-        # plt.colorbar(img, ticks=np.arange(1, num_features + 1), label='晶粒编号')
-        # plt.show()
         visible_binary(num_features, binary_data, labeled_array, 1, sorted_indices)
 
         # 7.3 拓扑结构可视化（显示边数和角度）
         plt.figure(figsize=(6, 6))
+        labeled_array = np.pad(labeled_array, pad_width=1, mode='constant', constant_values=0)
         plt.imshow(labeled_array > 0, cmap='gray')  # 背景
 
         # 显示前20个最大晶粒的拓扑结构（避免图像过于拥挤）
@@ -139,7 +160,6 @@ def analyze_grains(csv_file_path, threshold=0.72, visible_analyze=False):
                          f"{result['num_sides']}边\n{avg_angle:.1f}°",
                          color='red', ha='center', va='center',
                          fontsize=8, fontweight='bold')
-
         plt.title('晶粒拓扑结构（边数和平均角度）')
         plt.show()
 
@@ -148,12 +168,13 @@ def analyze_grains(csv_file_path, threshold=0.72, visible_analyze=False):
 
 # 使用示例
 if __name__ == "__main__":
-    csv_file_path = "time_15000.csv"  # 替换为您的CSV文件路径
-    num_grains, areas, topology = analyze_grains(csv_file_path, visible_analyze=True)
+    csv_file_path = "data/time_100.csv"
+    num_grains, areas, topology = analyze_grains(csv_file_path, print_result=False, visible_analyze=True)
+    print(int(csv_file_path[10:-4]))
 
-    # 输出前10个晶粒的详细拓扑信息
-    print("\n前10个晶粒的详细拓扑信息:")
-    for grain_id in list(topology.keys())[:10]:
-        info = topology[grain_id]
-        print(
-            f"晶粒{grain_id}: {info['num_sides']}边, 角度范围: {min(info['angles']):.1f}°-{max(info['angles']):.1f}°, 平均角度: {np.mean(info['angles']):.1f}°")
+    # # 输出前10个晶粒的详细拓扑信息
+    # print("\n前10个晶粒的详细拓扑信息:")
+    # for grain_id in list(topology.keys())[:10]:
+    #     info = topology[grain_id]
+    #     print(
+    #         f"晶粒{grain_id}: {info['num_sides']}边, 角度范围: {min(info['angles']):.1f}°-{max(info['angles']):.1f}°, 平均角度: {np.mean(info['angles']):.1f}°")
