@@ -146,7 +146,7 @@ def analyze_grains(csv_file_path, threshold=0.72, print_result=True, visible_ana
         plt.imshow(labeled_array > 0, cmap='gray')  # 背景
 
         # 显示前20个最大晶粒的拓扑结构（避免图像过于拥挤）
-        max_grains_to_show = min(1, num_features)
+        max_grains_to_show = min(30, num_features)
         for grain_id in sorted_indices[:max_grains_to_show] + 1:
             if grain_id in topology_results:
                 result = topology_results[grain_id]

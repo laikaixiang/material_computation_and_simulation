@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from analysis import analyze_grains
+import seaborn as sns
+import pickle
 
 # 设置字体为黑体
 plt.rcParams['font.family'] = 'SimSun'
@@ -61,8 +63,8 @@ def load_selected_data(data_dir, intervals):
 def dynamic_analysis(all_results):
     """根据时间阶段采用不同的分析策略"""
     early_stage = [r for r in all_results if r['time'] <= 100]
-    mid_stage = [r for r in all_results if 100 < r['time'] <= 2000]
-    late_stage = [r for r in all_results if r['time'] > 1000]
+    mid_stage = [r for r in all_results if 100 < r['time'] <= 5000]
+    late_stage = [r for r in all_results if r['time'] > 5000]
 
     analysis_results = {}
 
@@ -214,21 +216,82 @@ def plot_dynamic_results(analysis_results):
         plt.show()
 
     # 2. 平均边数随时间变化
-    if 'mid' in analysis_results:
-        plt.figure(figsize=(10, 6))
-        times = analysis_results['mid']['times']
-        avg_sides = analysis_results['mid']['avg_sides']
-        plt.plot(times, avg_sides, 'ro-')
-        plt.axhline(y=6, color='k', linestyle='--', label='理论平均值=6')
-        plt.xlabel('时间')
-        plt.ylabel('平均边数')
-        plt.title('晶粒平均边数随时间变化')
-        plt.legend()
-        plt.grid(True)
+    if 'mid' in analysis_results or 'late' in analysis_results:
+        plt.figure(figsize=(12, 7))
 
-        # 保存
-        image_path = os.path.join(image_dir, '晶粒平均边数随时间变化(mid).svg')
-        plt.savefig(image_path, dpi=300, format='svg')
+        # 准备数据
+        mid_times = analysis_results['mid']['times'] if 'mid' in analysis_results else []
+        mid_avg_sides = analysis_results['mid']['avg_sides'] if 'mid' in analysis_results else []
+        late_times = analysis_results['late']['times'] if 'late' in analysis_results else []
+        late_avg_sides = analysis_results['late']['avg_sides'] if 'late' in analysis_results else []
+
+        # 合并数据
+        all_times = np.concatenate((mid_times, late_times))
+        all_avg_sides = np.concatenate((mid_avg_sides, late_avg_sides))
+
+        # 绘制曲线（中期用红色，后期用蓝色）
+        if 'mid' in analysis_results:
+            plt.plot(
+                mid_times, mid_avg_sides,
+                marker='o',  # 圆点标记
+                linestyle='-',  # 实线
+                color='r',  # 统一颜色
+                linewidth=2,
+                markersize=8,
+                label='中期数据',
+                alpha=0.8
+            )
+        if 'late' in analysis_results:
+            plt.plot(
+                late_times, late_avg_sides,
+                marker='^',  # 方块标记
+                linestyle='-',  # 实线（保持与中期一致）
+                color='r',  # 统一颜色
+                linewidth=2,
+                markersize=8,
+                label='后期数据',
+                alpha=0.8
+            )
+
+        # 连起来
+        plt.plot([mid_times[-1], late_times[0]],
+                 [mid_avg_sides[-1], late_avg_sides[0]],
+                 linestyle='-',  # 实线
+                 color='r',  # 统一颜色
+                 linewidth=2,
+                 alpha=0.8
+                 )
+
+        # 理论参考线
+        plt.axhline(y=6, color='gray', linestyle='--', label='理论平均值=6')
+        plt.axhline(y=np.mean(all_avg_sides), color='k', linestyle='--', label=f'实际平均值={np.mean(all_avg_sides):2f}')
+
+        # # 标记阶段分界
+        # if 'mid' in analysis_results and 'late' in analysis_results:
+        #     transition_time = mid_times[-1]
+        #     plt.axvline(x=transition_time, color='gray', linestyle='--', alpha=0.6)
+        #     plt.text(transition_time, max(all_avg_sides) * 0.95,
+        #              '中期→后期', ha='center', va='center',
+        #              bbox=dict(facecolor='white', alpha=0.8))
+
+        # # 添加趋势线（可选）
+        # if len(all_times) > 2:
+        #     coeffs = np.polyfit(all_times, all_avg_sides, 1)
+        #     poly = np.poly1d(coeffs)
+        #     plt.plot(all_times, poly(all_times), 'g--', linewidth=1.5,
+        #              label=f'整体趋势: y={coeffs[0]:.3f}x+{coeffs[1]:.2f}')
+
+        # 图表装饰
+        plt.xlabel('时间（模拟步数）', fontsize=12)
+        plt.ylabel('平均边数', fontsize=12)
+        plt.title('晶粒平均边数随时间变化', fontsize=14, pad=20)
+        plt.grid(True, linestyle='--', alpha=0.6)
+        plt.legend(fontsize=10, loc='best')
+
+        # 保存图像
+        os.makedirs(image_dir, exist_ok=True)
+        image_path = os.path.join(image_dir, '晶粒平均边数随时间变化(全阶段).svg')
+        plt.savefig(image_path, dpi=300, format='svg', bbox_inches='tight')
 
         plt.show()
 
@@ -310,7 +373,7 @@ def plot_dynamic_results(analysis_results):
         # 线性拟合（可以选择对中期和后期分别拟合）
         if len(times_array) > 1:
             # 整体拟合
-            coeffs = np.polyfit(times_array, sizes_array, 1)
+            coeffs = np.polyfit(times_array, sizes_array, 2)
             poly = np.poly1d(coeffs)
             fit_line = poly(times_array)
 
@@ -322,7 +385,7 @@ def plot_dynamic_results(analysis_results):
 
             # 绘制拟合线
             plt.plot(times_array, fit_line, 'b--', linewidth=2,
-                     label=f'线性拟合: y = {coeffs[0]:.4f}x + {coeffs[1]:.2f}\nR² = {r_squared:.3f}')
+                     label=f'二次函数拟合: y = {coeffs[0]:.4e}x² + {coeffs[1]:.2e} + {coeffs[2]:.2f}\nR² = {r_squared:.3f}')
 
             # 可选：对中期和后期分别拟合
             if 'mid' in analysis_results and 'late' in analysis_results:
@@ -403,10 +466,10 @@ def plot_dynamic_results(analysis_results):
         # 标记阶段分界
         if 'mid' in analysis_results and 'late' in analysis_results:
             transition_time = mid_times[-1]
-            plt.axvline(x=transition_time, color='gray', linestyle='--', alpha=0.6)
-            plt.text(transition_time, max(all_counts) * 0.9,
-                     '中期→后期', ha='center', va='center',
-                     bbox=dict(facecolor='white', alpha=0.8))
+            # plt.axvline(x=transition_time, color='gray', linestyle='--', alpha=0.6)
+            # plt.text(transition_time, max(all_counts) * 0.9,
+            #          '中期→后期', ha='center', va='center',
+            #          bbox=dict(facecolor='white', alpha=0.8))
 
         # 图表装饰
         plt.xlabel('时间（模拟步数）', fontsize=12)
@@ -432,6 +495,68 @@ def plot_dynamic_results(analysis_results):
         # 保存
         image_path = os.path.join(image_dir, '中期和后期晶粒数量随时间变化.svg')
         plt.savefig(image_path, dpi=300, format='svg')
+
+        plt.show()
+
+    # 8. 面积分布分析（智能选择代表性轮次）
+    if 'mid' in analysis_results or 'late' in analysis_results:
+        # 智能选择分析轮次（选择初期、中期、后期各1个代表性时间点）
+        selected_stages = []
+        if 'mid' in analysis_results:
+            mid_len = len(analysis_results['mid']['times'])
+            selected_stages.append(('mid', 0))  # 中期开始
+            if mid_len > 1:
+                selected_stages.append(('mid', mid_len // 2))  # 中期中间
+        if 'late' in analysis_results:
+            late_len = len(analysis_results['late']['times'])
+            selected_stages.append(('late', late_len // 2))  # 后期中间
+            if late_len > 1:
+                selected_stages.append(('late', -1))  # 后期结束
+
+        # 准备绘图
+        plt.figure(figsize=(14, 8))
+
+        # 计算全局最大面积用于统一x轴范围
+        max_area = max(
+            max([d['area'] for d in analysis_results[stage]['size_topology_correlation'][idx]]
+                for stage, idx in selected_stages)
+        )
+
+        # 对每个选中的阶段进行分析
+        for i, (stage, idx) in enumerate(selected_stages, 1):
+            time_point = analysis_results[stage]['times'][idx]
+            size_data = analysis_results[stage]['size_topology_correlation'][idx]
+            areas = np.array([d['area'] for d in size_data])
+            normalized_areas = areas / np.mean(areas)  # 面积/平均面积
+
+            # 使用Seaborn的分布图（更专业的统计可视化）
+            ax = plt.subplot(2, 2, i)
+            sns.histplot(normalized_areas, bins=30, kde=True,
+                         color=plt.cm.tab10(i - 1), edgecolor='w', linewidth=0.5)
+
+            # 添加统计信息
+            median_val = np.median(normalized_areas)
+            std_val = np.std(normalized_areas)
+            ax.axvline(x=1, color='k', linestyle='--', label='平均值')
+            ax.axvline(x=median_val, color='r', linestyle=':', label=f'中位数: {median_val:.2f}')
+
+            # 图表装饰
+            stage_name = '中期' if stage == 'mid' else '后期'
+            ax.set_title(f'{stage_name}阶段 (t={time_point})\nμ=1.0, σ={std_val:.2f}', fontsize=11)
+            ax.set_xlabel('面积/平均面积')
+            ax.set_ylabel('频数')
+            ax.set_xlim(0, min(3, max_area / np.mean(areas)))  # 限制x轴范围
+            ax.legend(fontsize=9)
+            ax.grid(True, linestyle=':', alpha=0.6)
+
+        # 整体标题和布局调整
+        plt.suptitle('晶粒面积分布演变（标准化处理）', fontsize=14, y=1.02)
+        plt.tight_layout()
+
+        # 保存图像
+        os.makedirs(image_dir, exist_ok=True)
+        image_path = os.path.join(image_dir, '晶粒面积频数分布.svg')
+        plt.savefig(image_path, dpi=300, format='svg', bbox_inches='tight')
 
         plt.show()
 
@@ -469,15 +594,51 @@ def plot_lewis_law_relationship(size_topology_data, image_dir='images/'):
 
     plt.show()
 
+def save_results(all_results, filename='grain_analysis_results.pkl'):
+    """
+    保存分析结果到pickle文件
+    :param all_results: 要保存的分析结果字典
+    :param filename: 保存文件名，默认'grain_analysis_results.pkl'
+    """
+    with open(filename, 'wb') as f:
+        pickle.dump(all_results, f)
+    print(f"分析结果已保存到 {filename}")
+
+
+def load_results(filename='grain_analysis_results.pkl'):
+    """
+    从pickle文件加载分析结果
+    :param filename: 要加载的文件名，默认'grain_analysis_results.pkl'
+    :return: 加载的分析结果字典
+    """
+    try:
+        with open(filename, 'rb') as f:
+            loaded_data = pickle.load(f)
+        print(f"已从 {filename} 加载分析结果")
+        return loaded_data
+    except FileNotFoundError:
+        print(f"错误：文件 {filename} 不存在")
+        return None
+    except Exception as e:
+        print(f"加载文件时出错: {str(e)}")
+        return None
 
 def main():
     data_dir = "data/"
+    # 尝试加载已保存结果
+    loaded_results = load_results()
+    if loaded_results is not None:
+        print("使用已保存的分析结果")
+        analysis_results = dynamic_analysis(loaded_results)
+        plot_dynamic_results(analysis_results)
+        return loaded_results
+
     csv_files = sorted([f for f in os.listdir(data_dir) if f.startswith('time_') and f.endswith('.csv')],
                        key=lambda x: int(x.split('_')[1].split('.')[0]))
 
     # 1. 根据时间步长范围确定分析间隔
     selected_intervals = get_time_intervals(csv_files)
-    print(f"Selected time intervals for analysis: {selected_intervals}")
+    # print(f"Selected time intervals for analysis: {selected_intervals}")
 
     # 2. 加载选定时间点的数据
     all_results = load_selected_data(data_dir, selected_intervals)
@@ -488,8 +649,16 @@ def main():
     # 4. 可视化结果
     plot_dynamic_results(analysis_results)
 
+    # 5. 保存结果
+    save_results(all_results)
+
     return analysis_results
 
 
 if __name__ == "__main__":
     results = main()
+
+    # 1、中/后期轮次?
+    # 2、早期是否要画？
+    # 3、最小面积阈值？
+    # 4、晶粒边数是否遵从某个分布？
