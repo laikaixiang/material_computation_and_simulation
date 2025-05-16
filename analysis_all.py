@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
 from analysis import analyze_grains
 import seaborn as sns
 import pickle
@@ -197,7 +198,9 @@ def plot_dynamic_results(analysis_results):
     """根据不同阶段的特点进行可视化（独立图表，中文标签）"""
     image_dir = "images/"
 
-    # 1. 晶粒成核速率（初期阶段）
+    # 1. 变量与时间的关系
+    # 1-1. 晶粒成核速率（初期阶段）
+    # d<n>/dt-t
     if 'early' in analysis_results:
         plt.figure(figsize=(10, 6))
         times = analysis_results['early']['times']
@@ -215,7 +218,8 @@ def plot_dynamic_results(analysis_results):
         # 展示
         plt.show()
 
-    # 2. 平均边数随时间变化
+    # 1-2. 平均边数随时间变化
+    # <c>-t
     if 'mid' in analysis_results or 'late' in analysis_results:
         plt.figure(figsize=(12, 7))
 
@@ -230,17 +234,17 @@ def plot_dynamic_results(analysis_results):
         all_avg_sides = np.concatenate((mid_avg_sides, late_avg_sides))
 
         # 绘制曲线（中期用红色，后期用蓝色）
-        if 'mid' in analysis_results:
-            plt.plot(
-                mid_times, mid_avg_sides,
-                marker='o',  # 圆点标记
-                linestyle='-',  # 实线
-                color='r',  # 统一颜色
-                linewidth=2,
-                markersize=8,
-                label='中期数据',
-                alpha=0.8
-            )
+        # if 'mid' in analysis_results:
+        #     plt.plot(
+        #         mid_times, mid_avg_sides,
+        #         marker='o',  # 圆点标记
+        #         linestyle='-',  # 实线
+        #         color='r',  # 统一颜色
+        #         linewidth=2,
+        #         markersize=8,
+        #         label='中期数据',
+        #         alpha=0.8
+        #     )
         if 'late' in analysis_results:
             plt.plot(
                 late_times, late_avg_sides,
@@ -254,17 +258,17 @@ def plot_dynamic_results(analysis_results):
             )
 
         # 连起来
-        plt.plot([mid_times[-1], late_times[0]],
-                 [mid_avg_sides[-1], late_avg_sides[0]],
-                 linestyle='-',  # 实线
-                 color='r',  # 统一颜色
-                 linewidth=2,
-                 alpha=0.8
-                 )
+        # plt.plot([mid_times[-1], late_times[0]],
+        #          [mid_avg_sides[-1], late_avg_sides[0]],
+        #          linestyle='-',  # 实线
+        #          color='r',  # 统一颜色
+        #          linewidth=2,
+        #          alpha=0.8
+        #          )
 
         # 理论参考线
         plt.axhline(y=6, color='gray', linestyle='--', label='理论平均值=6')
-        plt.axhline(y=np.mean(all_avg_sides), color='k', linestyle='--', label=f'实际平均值={np.mean(all_avg_sides):2f}')
+        plt.axhline(y=np.mean(late_avg_sides), color='k', linestyle='--', label=f'实际平均值={np.mean(late_avg_sides):2f}')
 
         # # 标记阶段分界
         # if 'mid' in analysis_results and 'late' in analysis_results:
@@ -295,31 +299,8 @@ def plot_dynamic_results(analysis_results):
 
         plt.show()
 
-    # 3. 边数分布（选择代表性时间点）
-    if 'mid' in analysis_results:
-        plt.figure(figsize=(10, 6))
-        side_dists = analysis_results['mid']['side_distribution']
-        times = analysis_results['mid']['times']
-        selected_indices = [0, len(side_dists) // 2, -1]  # 首、中、末时间点
-
-        for idx in selected_indices:
-            dist = side_dists[idx]
-            time = times[idx]
-            plt.plot(dist.index, dist.values, 'o-', label=f't={time}')
-
-        plt.xlabel('边数')
-        plt.ylabel('出现频率')
-        plt.title('晶粒边数分布')
-        plt.legend(title='时间点')
-        plt.grid(True)
-
-        # 保存
-        image_path = os.path.join(image_dir, '晶粒边数分布.svg')
-        plt.savefig(image_path, dpi=300, format='svg')
-
-        plt.show()
-
-    # 4. 生长速率（稳态阶段）
+    # 1-3. 生长速率（稳态阶段）
+    # d<s>/dt-t
     if 'late' in analysis_results:
         plt.figure(figsize=(10, 6))
         times = analysis_results['late']['times'][1:]
@@ -336,11 +317,8 @@ def plot_dynamic_results(analysis_results):
 
         plt.show()
 
-    # 5. 尺寸-拓扑相关性图（类似Lewis定律）
-    if 'late' in analysis_results and len(analysis_results['late']['size_topology_correlation']) > 0:
-        plot_lewis_law_relationship(analysis_results['late']['size_topology_correlation'][-1])
-
-    # 6. 平均晶体粒径变化（中期和后期阶段）
+    # 1-4. 平均晶体粒径变化（中期和后期阶段）
+    # sqrt(<s>)-t
     if 'mid' in analysis_results or 'late' in analysis_results:
         plt.figure(figsize=(12, 7))
 
@@ -370,24 +348,38 @@ def plot_dynamic_results(analysis_results):
         plt.plot(times_array, sizes_array, 'mo-', linewidth=2, markersize=8,
                  label='原始数据', alpha=0.7)
 
-        # 线性拟合（可以选择对中期和后期分别拟合）
+        def sqrt_func(x, a, b, c):
+            """
+            定义根号函数
+            带偏移量的根号函数模型
+            y = a * sqrt(x - c) + b
+            """
+            return a * np.sqrt(np.clip(x - c, 0, None)) + b  # 确保根号内非负
+
+        initial_guess = [1.0, np.min(sizes_array), 0.5]  # 典型参数初始值
+
+        # 非线性拟合（根号函数）
         if len(times_array) > 1:
-            # 整体拟合
-            coeffs = np.polyfit(times_array, sizes_array, 2)
-            poly = np.poly1d(coeffs)
-            fit_line = poly(times_array)
+            try:
+                from scipy.optimize import curve_fit
+                # 进行非线性最小二乘拟合
+                popt, pcov = curve_fit(sqrt_func, times_array, sizes_array, p0=initial_guess)
+                fit_line = sqrt_func(times_array, *popt)
 
-            # 计算R平方值
-            residuals = sizes_array - fit_line
-            ss_res = np.sum(residuals ** 2)
-            ss_tot = np.sum((sizes_array - np.mean(sizes_array)) ** 2)
-            r_squared = 1 - (ss_res / ss_tot)
+                # 计算R平方值
+                residuals = sizes_array - fit_line
+                ss_res = np.sum(residuals ** 2)
+                ss_tot = np.sum((sizes_array - np.mean(sizes_array)) ** 2)
+                r_squared = 1 - (ss_res / ss_tot)
 
-            # 绘制拟合线
-            plt.plot(times_array, fit_line, 'b--', linewidth=2,
-                     label=f'二次函数拟合: y = {coeffs[0]:.4e}x² + {coeffs[1]:.2e} + {coeffs[2]:.2f}\nR² = {r_squared:.3f}')
+                # 绘制拟合线
+                plt.plot(times_array, fit_line, 'b--', linewidth=2,
+                         label=f'根号拟合: y = {popt[0]:.4f}√(x - {popt[2]:.4f}) + {popt[1]:.4f}\nR² = {r_squared:.3f}')
 
-            # 可选：对中期和后期分别拟合
+            except Exception as e:
+                print(f"非线性拟合失败: {str(e)}")
+
+            # 可选：对中期和后期分别线性拟合（保留原有逻辑）
             if 'mid' in analysis_results and 'late' in analysis_results:
                 mid_end_idx = len(analysis_results['mid']['times'])
 
@@ -405,13 +397,12 @@ def plot_dynamic_results(analysis_results):
                          'r:', linewidth=2,
                          label=f'后期拟合: y = {late_coeffs[0]:.4f}x + {late_coeffs[1]:.2f}')
 
-        # 图表装饰
+        # 图表装饰（保持原有逻辑不变）
         plt.xlabel('时间（模拟步数）', fontsize=12)
         plt.ylabel('平均晶体粒径（像素）', fontsize=12)
-        plt.title('晶体粒径随时间变化及线性拟合分析', fontsize=14, pad=20)
+        plt.title('晶体粒径随时间变化及拟合分析', fontsize=14, pad=20)
         plt.grid(True, linestyle='--', alpha=0.6)
 
-        # 添加阶段标记
         if 'mid' in analysis_results and 'late' in analysis_results:
             transition_time = analysis_results['mid']['times'][-1]
             plt.axvline(x=transition_time, color='gray', linestyle='--', alpha=0.5)
@@ -419,7 +410,6 @@ def plot_dynamic_results(analysis_results):
                      '中期→后期', ha='center', va='center',
                      backgroundcolor='white', fontsize=10)
 
-        # 添加拟合方程和统计信息
         plt.legend(fontsize=10, loc='upper left')
         plt.tight_layout()
 
@@ -429,7 +419,8 @@ def plot_dynamic_results(analysis_results):
 
         plt.show()
 
-    # 7. 晶粒个数随时间变化（中期和后期阶段）
+    # 1-5. 晶粒个数随时间变化（中期和后期阶段）
+    # n-t
     if 'mid' in analysis_results or 'late' in analysis_results:
         plt.figure(figsize=(12, 7))
 
@@ -498,7 +489,34 @@ def plot_dynamic_results(analysis_results):
 
         plt.show()
 
-    # 8. 面积分布分析（智能选择代表性轮次）
+    # 分布关系
+    # 2-1. 边数分布（选择代表性时间点）
+    # P(c)
+    if 'mid' in analysis_results:
+        plt.figure(figsize=(10, 6))
+        side_dists = analysis_results['mid']['side_distribution']
+        times = analysis_results['mid']['times']
+        selected_indices = [0, len(side_dists) // 2, -1]  # 首、中、末时间点
+
+        for idx in selected_indices:
+            dist = side_dists[idx]
+            time = times[idx]
+            plt.plot(dist.index, dist.values, 'o-', label=f't={time}')
+
+        plt.xlabel('边数')
+        plt.ylabel('出现频率')
+        plt.title('晶粒边数分布')
+        plt.legend(title='时间点')
+        plt.grid(True)
+
+        # 保存
+        image_path = os.path.join(image_dir, '晶粒边数分布.svg')
+        plt.savefig(image_path, dpi=300, format='svg')
+
+        plt.show()
+
+    # 2-2. 面积分布分析（智能选择代表性轮次）
+    # P(S)
     if 'mid' in analysis_results or 'late' in analysis_results:
         # 智能选择分析轮次（选择初期、中期、后期各1个代表性时间点）
         selected_stages = []
@@ -545,7 +563,8 @@ def plot_dynamic_results(analysis_results):
             ax.set_title(f'{stage_name}阶段 (t={time_point})\nμ=1.0, σ={std_val:.2f}', fontsize=11)
             ax.set_xlabel('面积/平均面积')
             ax.set_ylabel('频数')
-            ax.set_xlim(0, min(3, max_area / np.mean(areas)))  # 限制x轴范围
+            ax.set_xlim(min(normalized_areas))
+            # ax.set_xlim(0, min(3, max_area / np.mean(areas)))  # 限制x轴范围
             ax.legend(fontsize=9)
             ax.grid(True, linestyle=':', alpha=0.6)
 
@@ -559,6 +578,12 @@ def plot_dynamic_results(analysis_results):
         plt.savefig(image_path, dpi=300, format='svg', bbox_inches='tight')
 
         plt.show()
+
+    # 3. 变量与边数的关系
+    # 7. 尺寸-拓扑相关性图（类似Lewis定律）
+    if 'late' in analysis_results and len(analysis_results['late']['size_topology_correlation']) > 0:
+        plot_lewis_law_relationship(analysis_results['late']['size_topology_correlation'][-1])
+
 
 
 def plot_lewis_law_relationship(size_topology_data, image_dir='images/'):
@@ -657,8 +682,3 @@ def main():
 
 if __name__ == "__main__":
     results = main()
-
-    # 1、中/后期轮次?
-    # 2、早期是否要画？
-    # 3、最小面积阈值？
-    # 4、晶粒边数是否遵从某个分布？

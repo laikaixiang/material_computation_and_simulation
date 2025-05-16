@@ -32,7 +32,7 @@ def calculate_angles(polygon):
     return angles
 
 
-def analyze_grain_topology(labeled_array, grain_id, tolerance=2.5):
+def analyze_grain_topology(labeled_array, grain_id, tolerance=5):
     labeled_array = np.pad(labeled_array, pad_width=1, mode='constant', constant_values=0)
     mask = (labeled_array == grain_id)
     h, w = labeled_array.shape
@@ -90,7 +90,7 @@ def analyze_grain_topology(labeled_array, grain_id, tolerance=2.5):
     }
 
 
-def analyze_grains(csv_file_path, threshold=0.72, print_result=True, visible_analyze=False):
+def analyze_grains(csv_file_path, threshold=0.72, print_result=True, visible_analyze=False, min_area=32):
     # 1. 读取CSV文件
     data = pd.read_csv(csv_file_path, header=None).values
 
@@ -98,11 +98,26 @@ def analyze_grains(csv_file_path, threshold=0.72, print_result=True, visible_ana
     binary_data = (data > threshold).astype(int)
 
     # 3. 标记连通区域
-    labeled_array, num_features = ndimage.label(binary_data)
+    initial_labeled, num_features = ndimage.label(binary_data)
 
     print(f"总晶粒数量: {num_features}")
 
     # 4. 计算每个晶粒的面积
+    # 4. 过滤小晶粒并重新标记
+    # 4.1 计算初始面积
+    initial_areas = np.bincount(initial_labeled.ravel())
+
+    # 4.2 创建过滤掩膜
+    valid_mask = (initial_areas >= min_area)
+    valid_mask[0] = False  # 保持背景为0
+
+    # 4.3 生成过滤后的二值图像
+    filtered_binary = valid_mask[initial_labeled]
+
+    # 4.4 重新标记有效区域
+    labeled_array, num_features = ndimage.label(filtered_binary)
+
+    # 4.5 计算最终有效面积
     grain_areas = np.bincount(labeled_array.ravel())[1:]
     sorted_indices = np.argsort(grain_areas)[::-1]
     sorted_areas = grain_areas[sorted_indices]
@@ -168,7 +183,7 @@ def analyze_grains(csv_file_path, threshold=0.72, print_result=True, visible_ana
 
 # 使用示例
 if __name__ == "__main__":
-    csv_file_path = "data/time_30000.csv"
+    csv_file_path = "data/time_500.csv"
     num_grains, areas, topology = analyze_grains(csv_file_path, threshold=0.8, print_result=True, visible_analyze=True)
     print(int(csv_file_path[10:-4]))
 
